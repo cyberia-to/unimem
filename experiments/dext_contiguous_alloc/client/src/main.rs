@@ -753,7 +753,7 @@ fn try_ane_visibility(surface_size: usize) {
     }
 
     println!("  Wrote fp16(1.0) pattern to surface");
-    println!("  To verify ANE can read this surface, use rane::AneModel with");
+    println!("  To verify ANE can read this surface, use rane::Program with");
     println!("  this surface ID as input. See ~/git/rane/ for the full pipeline.");
     println!("  The key question: can we substitute DEXT-allocated contiguous");
     println!("  memory as the backing store and still have ANE accept it?");
