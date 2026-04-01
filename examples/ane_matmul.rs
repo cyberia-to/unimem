@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Allocate input and output from the same arena
     let input_ptr = tape.take(in_bytes, 64).unwrap();
-    let output_ptr = tape.take(out_bytes, 64).unwrap();
+    let _output_ptr = tape.take(out_bytes, 64).unwrap();
 
     // Fill input via arena's raw pointer — direct write, no lock/unlock
     unsafe {
