@@ -313,7 +313,7 @@ fn cell_id_distinct() {
     let c2 = grid.take().unwrap();
     let c3 = grid.take().unwrap();
 
-    let mut ids = [c0.id(), c1.id(), c2.id(), c3.id()];
+    let mut ids = vec![c0.id(), c1.id(), c2.id(), c3.id()];
     ids.sort();
     ids.dedup();
     assert_eq!(ids.len(), 4);
