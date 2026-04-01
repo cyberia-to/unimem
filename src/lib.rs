@@ -1,13 +1,13 @@
-pub mod ffi;
 pub mod block;
-pub mod tape;
+pub mod ffi;
 pub mod grid;
 pub mod layout;
+pub mod tape;
 
 pub use block::Block;
-pub use tape::Tape;
-pub use grid::{Grid, Cell};
+pub use grid::{Cell, Grid};
 pub use layout::{Layout, Stat};
+pub use tape::Tape;
 
 #[derive(Debug)]
 pub enum MemError {

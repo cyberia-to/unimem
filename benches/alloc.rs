@@ -83,9 +83,12 @@ fn bench_block(c: &mut Criterion) {
     group.bench_function("mmap_16mb", |b| {
         b.iter(|| unsafe {
             let p = libc::mmap(
-                std::ptr::null_mut(), 16 << 20,
+                std::ptr::null_mut(),
+                16 << 20,
                 libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0,
+                libc::MAP_ANON | libc::MAP_PRIVATE,
+                -1,
+                0,
             );
             black_box(p);
             libc::munmap(p, 16 << 20);

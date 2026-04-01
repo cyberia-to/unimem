@@ -95,9 +95,12 @@ impl std::fmt::Display for Stat {
         write!(
             f,
             "weights: {}/{} MB | scratch: {}/{} MB | history: {}/{} MB",
-            self.weights_used >> 20, self.weights_total >> 20,
-            self.scratch_used >> 20, self.scratch_total >> 20,
-            self.history_used >> 20, self.history_total >> 20,
+            self.weights_used >> 20,
+            self.weights_total >> 20,
+            self.scratch_used >> 20,
+            self.scratch_total >> 20,
+            self.history_used >> 20,
+            self.history_total >> 20,
         )
     }
 }

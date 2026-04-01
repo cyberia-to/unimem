@@ -43,10 +43,15 @@ fn bench_bandwidth(c: &mut Criterion) {
     prefill(cyb_ptr, SIZE);
 
     group.bench_function("tape_write", |b| {
-        b.iter(|| { write_bench(cyb_ptr, SIZE); black_box(()); });
+        b.iter(|| {
+            write_bench(cyb_ptr, SIZE);
+            black_box(());
+        });
     });
     group.bench_function("tape_read", |b| {
-        b.iter(|| { black_box(read_bench(cyb_ptr, SIZE)); });
+        b.iter(|| {
+            black_box(read_bench(cyb_ptr, SIZE));
+        });
     });
 
     let mut vec_buf: Vec<u8> = vec![0u8; SIZE];
@@ -54,24 +59,36 @@ fn bench_bandwidth(c: &mut Criterion) {
     prefill(vec_ptr, SIZE);
 
     group.bench_function("vec_write", |b| {
-        b.iter(|| { write_bench(vec_ptr, SIZE); black_box(()); });
+        b.iter(|| {
+            write_bench(vec_ptr, SIZE);
+            black_box(());
+        });
     });
     group.bench_function("vec_read", |b| {
-        b.iter(|| { black_box(read_bench(vec_ptr, SIZE)); });
+        b.iter(|| {
+            black_box(read_bench(vec_ptr, SIZE));
+        });
     });
 
     let malloc_ptr = unsafe { libc::malloc(SIZE) as *mut u8 };
     prefill(malloc_ptr, SIZE);
 
     group.bench_function("malloc_write", |b| {
-        b.iter(|| { write_bench(malloc_ptr, SIZE); black_box(()); });
+        b.iter(|| {
+            write_bench(malloc_ptr, SIZE);
+            black_box(());
+        });
     });
     group.bench_function("malloc_read", |b| {
-        b.iter(|| { black_box(read_bench(malloc_ptr, SIZE)); });
+        b.iter(|| {
+            black_box(read_bench(malloc_ptr, SIZE));
+        });
     });
 
     group.finish();
-    unsafe { libc::free(malloc_ptr as _); }
+    unsafe {
+        libc::free(malloc_ptr as _);
+    }
 }
 
 criterion_group!(benches, bench_bandwidth);

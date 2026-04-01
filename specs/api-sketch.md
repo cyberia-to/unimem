@@ -261,7 +261,7 @@ grid.give(cell);
 ```rust
 use unimem::Block;
 
-let block = Block::open(input_bytes)?;
+let block = Block::open(input_size)?;
 
 // Write input data
 unsafe {

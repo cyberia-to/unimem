@@ -1,4 +1,4 @@
-use unimem::{Block, Tape, Grid};
+use unimem::{Block, Grid, Tape};
 
 #[test]
 fn block_open_and_access() {
