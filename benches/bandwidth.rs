@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use cyb_mem::Tape;
+use unimem::Tape;
 
 const SIZE: usize = 64 * 1024 * 1024;
 

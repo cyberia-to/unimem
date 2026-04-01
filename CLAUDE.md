@@ -1,18 +1,18 @@
 # Claude Code Instructions
 
-## project: cyb-mem
+## project: unimem
 
 pure Rust memory driver for Apple Silicon. IOSurface-backed pinned shared
-buffers, bump arena (~1ns alloc), fixed-size tensor pool. zero-copy sharing
-between CPU, GPU, AMX, and ANE.
+buffers, Tape allocator (~1ns take), fixed-size Grid with Cells. zero-copy
+sharing between CPU, GPU, AMX, and ANE.
 
 ## role in the stack
 
-cyb-mem is a hardware memory driver. it allocates and manages buffers.
+unimem is a hardware memory driver. it allocates and manages buffers.
 it does NOT run compute, compile shaders, build graphs, or schedule ops.
 
 ```
-cyb-mem      memory: IOSurface, arena, pool
+unimem       memory: IOSurface, Block, Tape, Grid
 acpu         driver: CPU/AMX compute (NEON, AMX inline asm)
 aruminium    driver: Metal GPU compute (shaders, pipelines)
 rane         driver: ANE hardware (MIL compile, dispatch)
@@ -32,12 +32,12 @@ drivers expose raw capabilities. runtimes compose them.
 
 ```
 src/
-  lib.rs          public API: Surface, Arena, Pool, MemError
+  lib.rs          public API: Block, Tape, Grid, Cell, Layout, Stat, MemError
   ffi.rs          IOSurface + CoreFoundation raw FFI
-  surface.rs      Surface: pinned IOSurface, locked at creation
-  arena.rs        Arena: atomic bump allocator over Surface
-  pool.rs         Pool: fixed-size tensor slots over Arena
-  multi.rs        InferenceMemory: weights/activations/kv_cache layout
+  block.rs        Block: pinned IOSurface, locked at creation
+  tape.rs         Tape: Turing tape bump allocator (~1ns take, 0.3ns clear)
+  grid.rs         Grid/Cell: fixed-size cell grid over Tape
+  layout.rs       Layout: three-tape inference layout (weights/scratch/history)
 ```
 
 ## source of truth
@@ -58,16 +58,16 @@ no special signing. no entitlements. no SIP changes.
 
 ## key gotchas
 
-- IOSurface locked once at creation, unlocked at drop. VA stable for lifetime.
-- Arena alloc is compare_exchange loop, not fetch_add (no space waste on overshoot).
+- IOSurface locked once at creation, unlocked at drop. address stable for lifetime.
+- Tape take is compare_exchange loop, not fetch_add (no space waste on overshoot).
 - Apple Silicon uses 16KB kernel pages, not 4KB.
-- Surface is Send+Sync (immutable after creation). Arena is Send+Sync (atomic cursor).
-- Pool Slot has lifetime tied to Pool — compile-time use-after-free prevention.
-- IOSurfaceRef from surface.as_raw() is directly compatible with rane and aruminium.
+- Block is Send+Sync (immutable after creation). Tape is Send+Sync (atomic head).
+- Grid Cell has lifetime tied to Grid — compile-time use-after-free prevention.
+- IOSurfaceRef from block.handle() is directly compatible with rane and aruminium.
 
 ## sibling drivers
 
-- acpu (https://github.com/cyberia-to/acpu) — CPU/AMX: sgemm, softmax, rmsnorm, rope, silu
+- acpu (https://github.com/cyberia-to/acpu) — CPU/AMX: matmul_f32, softmax, normalize, rotate, silu
 - aruminium (https://github.com/cyberia-to/aruminium) — Metal GPU: shaders, buffers, compute
 - rane (https://github.com/cyberia-to/rane) — ANE: MIL compile, load, run
 
@@ -75,7 +75,7 @@ no special signing. no entitlements. no SIP changes.
 
 - raw FFI to IOSurface.framework and CoreFoundation. no objc2, no wrapper crates.
 - `cargo fmt` enforced. clippy clean.
-- unsafe confined to ffi.rs and Surface/Arena internals.
+- unsafe confined to ffi.rs and Block/Tape internals.
 
 ## git workflow
 

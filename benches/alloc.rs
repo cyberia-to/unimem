@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use cyb_mem::Tape;
+use unimem::Tape;
 
 fn bench_take(c: &mut Criterion) {
     let mut group = c.benchmark_group("take_comparison");
@@ -49,7 +49,7 @@ fn bench_take(c: &mut Criterion) {
 fn bench_grid(c: &mut Criterion) {
     let mut group = c.benchmark_group("grid_comparison");
 
-    let grid: cyb_mem::Grid<4096, 1024> = cyb_mem::Grid::new().unwrap();
+    let grid: unimem::Grid<4096, 1024> = unimem::Grid::new().unwrap();
 
     group.bench_function("grid_take_give", |b| {
         b.iter(|| {
@@ -75,7 +75,7 @@ fn bench_block(c: &mut Criterion) {
 
     group.bench_function("block_open_16mb", |b| {
         b.iter(|| {
-            let b = cyb_mem::Block::open(16 << 20).unwrap();
+            let b = unimem::Block::open(16 << 20).unwrap();
             black_box(b.address());
         });
     });
