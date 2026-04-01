@@ -102,6 +102,46 @@ impl Block {
     pub fn handle(&self) -> IOSurfaceRef {
         self.raw
     }
+
+    // ── Typed slice accessors ──
+    // Zero-cost views over the same physical memory.
+    // Caller is responsible for ensuring the data is valid for the requested type.
+
+    /// View as byte slice.
+    #[inline(always)]
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.va.as_ptr(), self.size) }
+    }
+
+    /// View as mutable byte slice.
+    #[inline(always)]
+    pub fn as_bytes_mut(&self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.va.as_ptr(), self.size) }
+    }
+
+    /// View as f32 slice. Length = size / 4.
+    #[inline(always)]
+    pub fn as_f32(&self) -> &[f32] {
+        unsafe { std::slice::from_raw_parts(self.va.as_ptr() as *const f32, self.size / 4) }
+    }
+
+    /// View as mutable f32 slice. Length = size / 4.
+    #[inline(always)]
+    pub fn as_f32_mut(&self) -> &mut [f32] {
+        unsafe { std::slice::from_raw_parts_mut(self.va.as_ptr() as *mut f32, self.size / 4) }
+    }
+
+    /// View as u16 slice (fp16). Length = size / 2.
+    #[inline(always)]
+    pub fn as_u16(&self) -> &[u16] {
+        unsafe { std::slice::from_raw_parts(self.va.as_ptr() as *const u16, self.size / 2) }
+    }
+
+    /// View as mutable u16 slice (fp16). Length = size / 2.
+    #[inline(always)]
+    pub fn as_u16_mut(&self) -> &mut [u16] {
+        unsafe { std::slice::from_raw_parts_mut(self.va.as_ptr() as *mut u16, self.size / 2) }
+    }
 }
 
 impl Drop for Block {

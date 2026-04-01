@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "acpu"
 version = "0.1.0"
+dependencies = [
+ "unimem",
+]
 
 [[package]]
 name = "aho-corasick"
@@ -32,6 +35,7 @@ name = "aruminium"
 version = "0.1.0"
 dependencies = [
  "acpu",
+ "unimem",
 ]
 
 [[package]]
