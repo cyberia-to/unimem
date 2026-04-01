@@ -6,7 +6,7 @@
 //!   GPU:        same matmul for comparison (shader compile cost amortized)
 //!   ANE:        matmul via compiled MIL program
 //!
-//! Two modes: standard (Vec, separate allocs, copies) vs cyb-mem (one tape, zero-copy)
+//! Two modes: standard (Vec, separate allocs, copies) vs unimem (one tape, zero-copy)
 //!
 //! Run: cargo run --example pipeline --release
 
@@ -20,7 +20,7 @@ const SEQ: usize = 128;       // sequence length
 const FFN_DIM: usize = 1376;  // ~2.7x DIM (Llama-style)
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Transformer layer pipeline: cyb-mem vs standard ===");
+    println!("=== Transformer layer pipeline: unimem vs standard ===");
     println!("    dim={DIM} heads={HEADS} seq={SEQ} ffn={FFN_DIM}\n");
 
     // Run reference first (warms caches, loads frameworks)
@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Comparison
     println!("\n=== Comparison ===\n");
-    println!("  {:28} {:>12} {:>12} {:>8}", "Stage", "Standard", "cyb-mem", "Speedup");
+    println!("  {:28} {:>12} {:>12} {:>8}", "Stage", "Standard", "unimem", "Speedup");
     println!("  {:28} {:>12} {:>12} {:>8}", "-----", "--------", "-------", "-------");
 
     let pairs = [
@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n  reference verified: {}", ref_result.pass);
-    println!("  cyb-mem verified:   {}", cyb_result.pass);
+    println!("  unimem verified:   {}", cyb_result.pass);
 
     Ok(())
 }

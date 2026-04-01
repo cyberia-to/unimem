@@ -1,4 +1,4 @@
-# cyb-mem: Zero-Copy Memory Driver for Apple Silicon
+# unimem: Zero-Copy Memory Driver for Apple Silicon
 
 ## Goal
 
@@ -63,25 +63,19 @@ NVMe ──DMA(IOVA)──→ IOSurface ──→ CPU/AMX/ANE/GPU
 ## Crate structure (v0)
 
 ```
-cyb-mem/
+unimem/
   src/
     lib.rs          ← public API, re-exports, MemError
     ffi.rs          ← raw FFI: IOSurface, CoreFoundation symbols + types
-    surface.rs      ← Surface struct over IOSurface
-    arena.rs        ← bump allocator over Surface
-    pool.rs         ← fixed-size pool over Arena
-  benches/
-    alloc.rs        ← arena vs malloc, mimalloc, bumpalo
-    bandwidth.rs    ← sequential read/write throughput
-    latency.rs      ← per-allocation latency distribution
-  tests/
-    roundtrip.rs    ← alloc → write → read → verify
-    ane_share.rs    ← create Surface, pass IOSurfaceRef to rane
+    block.rs        ← Block: pinned IOSurface, locked at creation
+    tape.rs         ← Tape: Turing tape bump allocator
+    grid.rs         ← Grid/Cell: fixed-size cell grid over Tape
+    layout.rs       ← Layout: three-tape inference layout
 ```
 
 ---
 
-## Layer 1 — IOSurface allocation (`surface`)
+## Layer 1 — IOSurface allocation (`block`)
 
 ### Purpose
 
@@ -93,11 +87,11 @@ Raw FFI to IOSurface.framework and CoreFoundation. Same pattern as rane — no o
 
 IOSurface FFI functions:
 - `IOSurfaceCreate(properties)` → IOSurfaceRef
-- `IOSurfaceLock(surface, options, seed)` → lock for CPU access
-- `IOSurfaceUnlock(surface, options, seed)` → release lock
-- `IOSurfaceGetBaseAddress(surface)` → virtual pointer
-- `IOSurfaceGetAllocSize(surface)` → allocation size
-- `IOSurfaceGetID(surface)` → global surface ID (for sharing)
+- `IOSurfaceLock(block, options, seed)` → lock for CPU access
+- `IOSurfaceUnlock(block, options, seed)` → release lock
+- `IOSurfaceGetBaseAddress(block)` → virtual pointer
+- `IOSurfaceGetAllocSize(block)` → allocation size
+- `IOSurfaceGetID(block)` → global block ID (for sharing)
 
 CoreFoundation FFI functions:
 - `CFDictionaryCreateMutable(alloc, capacity, keyCallbacks, valueCallbacks)` → dict
@@ -115,35 +109,35 @@ IOSurface property keys (extern CFStringRef constants):
 
 ### Lock model
 
-Surface is locked once at creation time and stays locked until drop. This makes VA stable for the entire lifetime — Arena can hand out raw pointers without per-alloc lock/unlock overhead.
+Block is locked once at creation time and stays locked until drop. This makes VA stable for the entire lifetime — Tape can hand out raw pointers without per-alloc lock/unlock overhead.
 
-- `new()`: IOSurfaceCreate → IOSurfaceLock → cache VA → ready
+- `open()`: IOSurfaceCreate → IOSurfaceLock → cache VA → ready
 - `drop()`: IOSurfaceUnlock → CFRelease
 
 No public lock/unlock API. Lock is internal implementation detail.
 
-### Data: Surface
+### Data: Block
 
 | Field | Type | Description |
 |-------|------|-------------|
-| ref | IOSurfaceRef | kernel surface handle (CFRelease on drop) |
+| ref | IOSurfaceRef | kernel block handle (CFRelease on drop) |
 | va | non-null pointer | base virtual address (stable — locked at creation) |
 | size | usize | allocation size in bytes |
 | id | u32 | global IOSurface ID |
 
 ### Thread safety
 
-Surface is Send + Sync. After creation, all fields are immutable (ref, va, size, id never change). The lock is held for the entire lifetime — no mutable state, no data races. Multiple threads can read VA concurrently.
+Block is Send + Sync. After creation, all fields are immutable (ref, va, size, id never change). The lock is held for the entire lifetime — no mutable state, no data races. Multiple threads can read VA concurrently.
 
 ### Operations
 
 | Operation | Input | Output | Latency | Notes |
 |-----------|-------|--------|---------|-------|
-| new | size (bytes) | Surface or error | ~20us | creates, locks, caches VA |
-| as_ptr | — | raw pointer | inline, 0ns | returns cached VA (always valid) |
+| open | size (bytes) | Block or error | ~20us | creates, locks, caches VA |
+| address | — | raw pointer | inline, 0ns | returns cached VA (always valid) |
 | size | — | usize | inline, 0ns | returns cached size |
 | id | — | u32 | inline, 0ns | for sharing with DEXT (v1) |
-| as_raw | — | IOSurfaceRef | inline, 0ns | raw handle for ANE (rane) / GPU (Metal) integration |
+| handle | — | IOSurfaceRef | inline, 0ns | raw handle for ANE (rane) / GPU (Metal) integration |
 | drop | — | — | ~5us | IOSurfaceUnlock + CFRelease |
 
 ### Measured performance (from experiment)
@@ -162,39 +156,39 @@ Throughput measured with volatile u64, single thread, no SIMD. With NEON/AMX: 60
 - Allocation is lazy — kernel reserves VA space, pages backed on first touch
 - First-touch page fault: ~1000-1200ns per 16KB page
 - All IOSurfaces map as single contiguous VM region
-- Surface is Send + Sync (immutable after creation, lock held for lifetime)
+- Block is Send + Sync (immutable after creation, lock held for lifetime)
 - Drop sequence: IOSurfaceUnlock → CFRelease — no leaks
-- new(0) returns error (ZeroSize)
+- open(0) returns error (ZeroSize)
 - Allocation failure returns error, never panics
 
 ---
 
-## Layer 2 — Bump allocator (`arena`)
+## Layer 2 — Bump allocator (`tape`)
 
 ### Purpose
 
-Fast sub-allocation over a single IOSurface. Zero syscalls after init. Reset in O(1). Surface stays pinned between resets.
+Fast sub-allocation over a single IOSurface. Zero syscalls after init. Clear in O(1). Block stays pinned between clears.
 
 ### Mechanism
 
-Atomic bump pointer over Surface. Allocation = compare-exchange loop with alignment rounding. Reset = single atomic store.
+Atomic bump pointer over Block. Allocation = compare-exchange loop with alignment rounding. Clear = single atomic store.
 
-### Data: Arena
+### Data: Tape
 
 | Field | Type | Description |
 |-------|------|-------------|
-| surface | Surface | backing IOSurface |
+| block | Block | backing IOSurface |
 | cursor | atomic usize | current allocation offset |
-| capacity | usize | total arena size (= surface.size) |
+| capacity | usize | total tape size (= block.size) |
 
 ### Thread safety
 
-Arena is Send + Sync. Surface is immutable (Send + Sync). Cursor is atomic. Multiple threads can alloc concurrently via compare_exchange loop.
+Tape is Send + Sync. Block is immutable (Send + Sync). Cursor is atomic. Multiple threads can take concurrently via compare_exchange loop.
 
 ### Alloc algorithm
 
 ```
-fn alloc(size, align) -> Option<*mut u8>:
+fn take(size, align) -> Option<*mut u8>:
     loop:
         current = cursor.load(Relaxed)
         aligned = (current + align - 1) & !(align - 1)
@@ -202,7 +196,7 @@ fn alloc(size, align) -> Option<*mut u8>:
         if new_cursor > capacity:
             return None
         if cursor.compare_exchange_weak(current, new_cursor, Relaxed, Relaxed).ok:
-            return surface.as_ptr() + aligned
+            return block.address() + aligned
 ```
 
 compare_exchange chosen over fetch_add because:
@@ -214,76 +208,76 @@ compare_exchange chosen over fetch_add because:
 
 | Operation | Input | Output | Latency | Notes |
 |-----------|-------|--------|---------|-------|
-| new | capacity (bytes) | Arena or error | ~20us | creates IOSurface |
-| alloc | size, alignment | pointer or none | < 5ns | compare_exchange loop |
-| alloc_typed | type T | typed pointer or none | < 5ns | uses size_of/align_of T |
-| reset | — | — | < 10ns | store 0 to cursor |
+| start | capacity (bytes) | Tape or error | ~20us | creates IOSurface |
+| take | size, alignment | pointer or none | < 5ns | compare_exchange loop |
+| take_one | type T | typed pointer or none | < 5ns | uses size_of/align_of T |
+| clear | — | — | < 10ns | store 0 to cursor |
 | used | — | usize | inline | cursor.load |
-| remaining | — | usize | inline | capacity - used |
-| contains | pointer | bool | inline | ptr within [base, base+capacity) |
+| free | — | usize | inline | capacity - used |
+| owns | pointer | bool | inline | ptr within [base, base+capacity) |
 
 ### Invariants
 
-- Alloc is lock-free — compare_exchange_weak, no mutex, no syscall
+- Take is lock-free — compare_exchange_weak, no mutex, no syscall
 - Alignment: must be power of 2. Minimum 1, recommended 64 for AMX SIMD
 - Apple Silicon kernel pages are 16KB (not 4KB)
-- new(0) returns error (ZeroSize)
+- start(0) returns error (ZeroSize)
 - no_std compatible core logic (only depends on atomic ops + pointer arithmetic)
-- Reset does NOT zero memory — caller responsible if needed
-- Concurrent alloc is safe (atomic). Concurrent alloc + reset is NOT safe — caller must ensure no alloc is in-flight during reset (e.g. single-threaded reset between inference passes)
+- Clear does NOT zero memory — caller responsible if needed
+- Concurrent take is safe (atomic). Concurrent take + clear is NOT safe — caller must ensure no take is in-flight during clear (e.g. single-threaded clear between inference passes)
 
 ---
 
-## Layer 3 — Fixed-size tensor pool (`pool`)
+## Layer 3 — Fixed-size tensor grid (`grid`)
 
 ### Purpose
 
-Pre-allocated pool for inference tensors. Acquire and release with zero allocator overhead.
+Pre-allocated grid for inference tensors. Take and give with zero allocator overhead.
 
 ### Mechanism
 
-Arena-backed array of fixed-size slots. Lock-free queue (crossbeam SegQueue) tracks free slot indices. Pool owns the Arena.
+Tape-backed array of fixed-size cells. Lock-free queue (crossbeam SegQueue) tracks free cell indices. Grid owns the Tape.
 
 ### Sizing
 
-Arena capacity = SLOT_SIZE * SLOTS. SLOT_SIZE must be a multiple of 64 (AMX alignment). This guarantees every slot is 64-byte aligned with no wasted padding.
+Tape capacity = CELL_SIZE * CELLS. CELL_SIZE must be a multiple of 64 (AMX alignment). This guarantees every cell is 64-byte aligned with no wasted padding.
 
-Example: 32 slots of 4MB each → Arena of 128MB → one IOSurface of 128MB.
+Example: 32 cells of 4MB each → Tape of 128MB → one IOSurface of 128MB.
 
-### Data: Pool
+### Data: Grid
 
 | Parameter | Description |
 |-----------|-------------|
-| SLOT_SIZE | size of each slot in bytes (compile-time, must be multiple of 64) |
-| SLOTS | number of slots (compile-time) |
+| CELL_SIZE | size of each cell in bytes (compile-time, must be multiple of 64) |
+| CELLS | number of cells (compile-time) |
 
-### Data: Slot
+### Data: Cell
 
-Slot borrows the Pool (`Slot<'a>` with lifetime tied to `&'a Pool`). This prevents use-after-free at compile time with zero runtime overhead — no Arc, no refcount.
+Cell borrows the Grid (`Cell<'a>` with lifetime tied to `&'a Grid`). This prevents use-after-free at compile time with zero runtime overhead — no Arc, no refcount.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| ptr | raw pointer | virtual address of slot data |
-| index | usize | slot index (for release back to pool) |
-| _pool | PhantomData<&'a Pool> | lifetime tie — Slot cannot outlive Pool |
+| ptr | raw pointer | virtual address of cell data |
+| id | usize | cell index (for give back to grid) |
+| _grid | PhantomData<&'a Grid> | lifetime tie — Cell cannot outlive Grid |
 
 ### Operations
 
 | Operation | Input | Output | Latency | Notes |
 |-----------|-------|--------|---------|-------|
-| new | — | Pool or error | ~20us | creates arena (SLOT_SIZE * SLOTS), fills free queue |
-| acquire | — | Slot or none | ~10ns | pop from lock-free queue |
-| release | Slot | — | ~10ns | push index back to queue |
-| available | — | usize | ~10ns | free queue length |
-| capacity | — | usize | inline | SLOTS (compile-time) |
+| new | — | Grid or error | ~20us | creates tape (CELL_SIZE * CELLS), fills free queue |
+| take | — | Cell or none | ~10ns | pop from lock-free queue |
+| give | Cell | — | ~10ns | push index back to queue |
+| free | — | usize | ~10ns | free queue length |
+| total | — | usize | inline | CELLS (compile-time) |
 
 ### Invariants
 
-- Slot count fixed at compile time — no runtime resize
-- Acquire returns none when exhausted — no panic, no block
-- Slot lifetime tied to Pool — compile-time use-after-free prevention
-- Released slots immediately reusable
-- Pool::drop is safe only when all Slots are released (enforced by lifetime — compiler prevents outstanding borrows)
+- Cell count fixed at compile time — no runtime resize
+- Take returns none when grid full — no panic, no block
+- Cell lifetime tied to Grid — compile-time use-after-free prevention
+- Given cells immediately reusable
+- Grid::drop is safe only when all Cells are given (enforced by lifetime — compiler prevents outstanding borrows)
 
 ---
 
@@ -291,7 +285,7 @@ Slot borrows the Pool (`Slot<'a>` with lifetime tied to `&'a Pool`). This preven
 
 ### Purpose
 
-v0: no trait. Surface and Arena expose as_ptr() and as_raw() directly. Hardware crates (rane, aruminium) consume IOSurfaceRef or raw pointers.
+v0: no trait. Block and Tape expose address() and handle() directly. Hardware crates (rane, aruminium) consume IOSurfaceRef or raw pointers.
 
 v1: add DmaBuffer trait with iova_segments() when DEXT is available.
 
@@ -299,10 +293,10 @@ v1: add DmaBuffer trait with iova_segments() when DEXT is available.
 
 | Consumer | Gets | How |
 |----------|------|-----|
-| CPU code | raw pointer | arena.alloc() or slot.ptr |
+| CPU code | raw pointer | tape.take() or cell.ptr |
 | AMX | raw pointer | same as CPU (AMX uses CPU instructions) |
-| ANE (rane) | IOSurfaceRef | surface.as_raw() → pass to _ANEIOSurfaceObject |
-| GPU (Metal) | IOSurfaceRef | surface.as_raw() → MTLTexture from IOSurface |
+| ANE (rane) | IOSurfaceRef | block.handle() → pass to _ANEIOSurfaceObject |
+| GPU (Metal) | IOSurfaceRef | block.handle() → MTLTexture from IOSurface |
 
 No trait needed — direct method calls. Trait appears in v1 when DEXT adds IOVA capability.
 
@@ -312,12 +306,12 @@ No trait needed — direct method calls. Trait appears in v1 when DEXT adds IOVA
 
 | Operation | Target | Baseline (mimalloc) |
 |-----------|--------|---------------------|
-| Single alloc (arena) | < 5ns | ~100ns |
+| Single take (tape) | < 5ns | ~100ns |
 | Sequential write 1GB | > 23 GB/s (volatile) | ~20 GB/s |
 | Sequential write 1GB (NEON) | > 60 GB/s | ~50 GB/s |
-| Arena reset 1GB | < 10ns | ~5ms (free loop) |
+| Tape clear 1GB | < 10ns | ~5ms (free loop) |
 | IOSurface alloc 256MB | < 25us | N/A |
-| Pool acquire/release | < 10ns | N/A |
+| Grid take/give | < 10ns | N/A |
 
 ---
 
@@ -325,16 +319,16 @@ No trait needed — direct method calls. Trait appears in v1 when DEXT adds IOVA
 
 | Error | Layer | Cause |
 |-------|-------|-------|
-| ZeroSize | surface, arena | new(0) — zero-size allocation requested |
-| SurfaceCreateFailed | surface | IOSurfaceCreate returned null (OOM or system limit) |
-| SurfaceLockFailed | surface | IOSurfaceLock returned non-zero |
-| InvalidAlignment | arena | alignment not power of 2 |
-| ArenaExhausted | arena | alloc: not enough space remaining |
-| PoolExhausted | pool | all slots in use |
+| ZeroSize | block, tape | open(0) / start(0) — zero-size allocation requested |
+| BlockCreateFailed | block | IOSurfaceCreate returned null (OOM or system limit) |
+| BlockLockFailed | block | IOSurfaceLock returned non-zero |
+| InvalidAlignment | tape | alignment not power of 2 |
+| tape full | tape | take: not enough space remaining |
+| grid full | grid | all cells in use |
 
-Arena.alloc and Pool.acquire return Option (None = exhausted) — not Result. These are hot-path operations, Option is lighter.
+Tape.take and Grid.take return Option (None = exhausted) — not Result. These are hot-path operations, Option is lighter.
 
-Surface::new and Pool::new return Result<T, MemError> — these are cold-path init operations.
+Block::open and Grid::new return Result<T, MemError> — these are cold-path init operations.
 
 All errors non-panicking. No unwrap, no expect in library code.
 
@@ -344,9 +338,9 @@ All errors non-panicking. No unwrap, no expect in library code.
 
 | Dependency | Purpose | Layer |
 |------------|---------|-------|
-| IOSurface.framework | pinned shared buffers | surface |
-| CoreFoundation | CFDictionary for IOSurface properties | surface |
-| crossbeam | lock-free queue for pool | pool |
+| IOSurface.framework | pinned shared buffers | block |
+| CoreFoundation | CFDictionary for IOSurface properties | block |
+| crossbeam | lock-free queue for grid | grid |
 | criterion | benchmarking | benches |
 
 No objc2. No Metal. No Hypervisor. No DriverKit (v0).
@@ -378,12 +372,12 @@ No special signing required for v0. No entitlements. No SIP changes.
 ## Implementation order (v0)
 
 1. `ffi.rs` — IOSurface + CoreFoundation FFI declarations (extern C, link attrs, type aliases)
-2. `surface.rs` — Surface struct: new (create + lock + cache VA), as_ptr, as_raw, drop (unlock + CFRelease)
-3. `arena.rs` — Arena struct: new (creates Surface), alloc (compare_exchange), reset, used/remaining/contains
-4. Benchmarks — prove arena alloc < 5ns, Surface throughput matches iosurface_probe experiment
-5. `pool.rs` — Pool struct: new (creates Arena), acquire/release with SegQueue, Slot with lifetime
-6. Integration test — roundtrip: alloc → write → read → verify
-7. ANE test — create Surface, pass as_raw() to rane, verify shared access
+2. `block.rs` — Block struct: open (create + lock + cache VA), address, handle, drop (unlock + CFRelease)
+3. `tape.rs` — Tape struct: start (creates Block), take (compare_exchange), clear, used/free/owns
+4. Benchmarks — prove tape take < 5ns, Block throughput matches iosurface_probe experiment
+5. `grid.rs` — Grid struct: new (creates Tape), take/give with SegQueue, Cell with lifetime
+6. Integration test — roundtrip: take → write → read → verify
+7. ANE test — create Block, pass handle() to rane, verify shared access
 
 ---
 
@@ -475,7 +469,7 @@ experiments/
 ## Relationship to the cyber stack
 
 ```
-cyb-mem       ← this crate: IOSurface + arena + pool
+unimem        ← this crate: IOSurface + tape + grid
   ↓
 rane          ← ANE inference (uses IOSurface for buffers)
 aruminium     ← AMX/GPU ops via Metal (can wrap IOSurface)

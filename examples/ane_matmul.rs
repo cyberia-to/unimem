@@ -1,6 +1,6 @@
-//! Integration test: cyb-mem Arena → ANE matmul via rane
+//! Integration test: unimem Tape → ANE matmul via rane
 //!
-//! Allocates IOSurface via cyb-mem, fills with data,
+//! Allocates IOBlock via unimem, fills with data,
 //! passes the raw IOSurfaceRef to rane for ANE execution.
 //! Zero copies between allocation and hardware compute.
 //!
@@ -13,7 +13,7 @@ use rane::{f32_to_fp16, fp16_to_f32, AneModel, AneSurface};
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== cyb-mem + rane ANE integration ===\n");
+    println!("=== unimem + rane ANE integration ===\n");
 
     let ic = 64;
     let oc = 64;
@@ -53,8 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     model.unload()?;
 
-    // --- Path B: cyb-mem Arena → ANE (zero-copy) ---
-    println!("--- Path B: cyb-mem Arena → ANE (zero-copy) ---");
+    // --- Path B: unimem Tape → ANE (zero-copy) ---
+    println!("--- Path B: unimem Tape → ANE (zero-copy) ---");
     let t0 = Instant::now();
 
     let tape = Tape::start(in_bytes + out_bytes + 4096)?;
@@ -71,13 +71,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let t_cyb_setup = t0.elapsed();
 
-    // Pass the arena's IOSurface to ANE
-    // rane needs separate IOSurfaces for input and output,
-    // so we create two surfaces but prove the cyb-mem allocation path works
+    // Pass the arena's IOBlock to ANE
+    // rane needs separate IOBlocks for input and output,
+    // so we create two surfaces but prove the unimem allocation path works
     let cyb_input = AneSurface::new(in_bytes)?;
     let cyb_output = AneSurface::new(out_bytes)?;
 
-    // Copy from arena buffer to AneSurface
+    // Copy from tape buffer to AneSurface
     // (in v1 with proper rane integration, AneSurface would accept external IOSurfaceRef)
     cyb_input.with_data_mut(|dest| {
         let src = unsafe { std::slice::from_raw_parts(input_ptr as *const u16, in_bytes / 2) };
@@ -97,23 +97,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  verify: {}\n", if cyb_ok { "PASS" } else { "FAIL" });
 
     // --- Path C: prove IOSurfaceRef sharing works ---
-    println!("--- Path C: cyb-mem Surface → IOSurfaceRef → rane compatible ---");
+    println!("--- Path C: unimem Block → IOSurfaceRef → rane compatible ---");
     let surface = unimem::Block::open(in_bytes)?;
     let raw: IOSurfaceRef = surface.handle();
-    println!("  cyb-mem Surface ID:     {}", surface.id());
-    println!("  cyb-mem Surface size:   {} bytes", surface.size());
+    println!("  unimem Block ID:     {}", surface.id());
+    println!("  unimem Block size:   {} bytes", surface.size());
     println!("  IOSurfaceRef:           {:?}", raw);
-    println!("  as_ptr:                 {:?}", surface.address());
+    println!("  address:                 {:?}", surface.address());
     println!("  rane-compatible:        YES (same IOSurfaceRef type)\n");
 
     // --- Summary ---
     println!("=== Summary ===");
     println!("  rane AneSurface run:    {:?}", t_rane_run);
-    println!("  cyb-mem → ANE run:      {:?}", t_cyb_run);
-    println!("  arena alloc overhead:   {:?}", t_cyb_setup);
+    println!("  unimem → ANE run:      {:?}", t_cyb_run);
+    println!("  tape alloc overhead:   {:?}", t_cyb_setup);
     println!("  IOSurfaceRef sharing:   proven (same type)");
     println!("\n  Next: modify rane to accept external IOSurfaceRef");
-    println!("  Then: true zero-copy from cyb-mem Arena to ANE");
+    println!("  Then: true zero-copy from unimem Tape to ANE");
 
     Ok(())
 }
