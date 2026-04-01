@@ -1,0 +1,6 @@
+target/
+build/
+*.dext/
+*.o
+*.d
+.DS_Store
